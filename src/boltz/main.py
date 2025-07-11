@@ -1043,13 +1043,13 @@ def predict(  # noqa: C901, PLR0915, PLR0912
             msg = f"Method {method} not supported. Supported: {method_names}"
             raise ValueError(msg)
 
+    ccd_path = cache / "ccd.pkl"
+    mol_dir = cache / "mols"
+
     # Set up the distributed fabric
     fabric = Fabric(strategy="ddp", accelerator=accelerator, devices=devices, num_nodes=num_nodes)
-
     def process(f: Fabric):
         # Process inputs
-        ccd_path = cache / "ccd.pkl"
-        mol_dir = cache / "mols"
         process_inputs(
             data=data,
             out_dir=out_dir,
