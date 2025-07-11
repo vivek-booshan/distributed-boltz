@@ -13,8 +13,9 @@ from typing import Literal, Optional
 
 import click
 import torch
+from lightning.fabric.strategies import DDPStrategy
+from lightning.fabric import Fabric
 from pytorch_lightning import Trainer, seed_everything
-from pytorch_lightning.strategies import DDPStrategy
 from pytorch_lightning.utilities import rank_zero_only
 from rdkit import Chem
 from tqdm import tqdm
@@ -768,6 +769,12 @@ def cli() -> None:
     default=1,
 )
 @click.option(
+    "--num_nodes",
+    type=int,
+    help="The number of nodes to use for prediction. Default is 1.",
+    default=1,
+)
+@click.option(
     "--accelerator",
     type=click.Choice(["gpu", "cpu", "tpu"]),
     help="The accelerator to use for prediction. Default is gpu.",
@@ -946,6 +953,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     checkpoint: Optional[str] = None,
     affinity_checkpoint: Optional[str] = None,
     devices: int = 1,
+    num_nodes: int = 1,
     accelerator: str = "gpu",
     recycling_steps: int = 3,
     sampling_steps: int = 200,
@@ -1035,21 +1043,30 @@ def predict(  # noqa: C901, PLR0915, PLR0912
             msg = f"Method {method} not supported. Supported: {method_names}"
             raise ValueError(msg)
 
-    # Process inputs
-    ccd_path = cache / "ccd.pkl"
-    mol_dir = cache / "mols"
-    process_inputs(
-        data=data,
-        out_dir=out_dir,
-        ccd_path=ccd_path,
-        mol_dir=mol_dir,
-        use_msa_server=use_msa_server,
-        msa_server_url=msa_server_url,
-        msa_pairing_strategy=msa_pairing_strategy,
-        boltz2=model == "boltz2",
-        preprocessing_threads=preprocessing_threads,
-        max_msa_seqs=max_msa_seqs,
-    )
+    # Set up the distributed fabric
+    fabric = Fabric(strategy="ddp", accelerator=accelerator, devices=devices, num_nodes=num_nodes)
+
+    def process(f: Fabric):
+        # Process inputs
+        ccd_path = cache / "ccd.pkl"
+        mol_dir = cache / "mols"
+        process_inputs(
+            data=data,
+            out_dir=out_dir,
+            ccd_path=ccd_path,
+            mol_dir=mol_dir,
+            use_msa_server=use_msa_server,
+            msa_server_url=msa_server_url,
+            msa_pairing_strategy=msa_pairing_strategy,
+            boltz2=model == "boltz2",
+            preprocessing_threads=preprocessing_threads,
+            max_msa_seqs=max_msa_seqs,
+        )
+
+        # wait for processes to catch up, as all the work is done on rank 0
+        f.strategy.barrier()
+
+    fabric.launch(process)
 
     # Load manifest
     manifest = Manifest.load(out_dir / "processed" / "manifest.json")
@@ -1083,12 +1100,9 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     )
 
     # Set up trainer
-    strategy = "auto"
     if (isinstance(devices, int) and devices > 1) or (
         isinstance(devices, list) and len(devices) > 1
     ):
-        start_method = "fork" if platform.system() != "win32" else "spawn"
-        strategy = DDPStrategy(start_method=start_method)
         if len(filtered_manifest.records) < devices:
             msg = (
                 "Number of requested devices is greater "
@@ -1130,7 +1144,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     # Set up trainer
     trainer = Trainer(
         default_root_dir=out_dir,
-        strategy=strategy,
+        strategy="ddp",
         callbacks=[pred_writer],
         accelerator=accelerator,
         devices=devices,
