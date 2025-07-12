@@ -290,7 +290,7 @@ def get_conformer(mol: Mol) -> Conformer:
             pass
 
     # Fallback to boltz2 format
-    conf_ids = [int(conf.GetId()) for conf in mol.GetConformers()]
+    conf_ids = list(range(mol.GetNumConformers()))
     if len(conf_ids) > 0:
         conf_id = conf_ids[0]
         conformer = mol.GetConformer(conf_id)
