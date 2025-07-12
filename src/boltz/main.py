@@ -1099,21 +1099,6 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         ),
     )
 
-    # Set up trainer
-    if (isinstance(devices, int) and devices > 1) or (
-        isinstance(devices, list) and len(devices) > 1
-    ):
-        if len(filtered_manifest.records) < devices:
-            msg = (
-                "Number of requested devices is greater "
-                "than the number of predictions, taking the minimum."
-            )
-            click.echo(msg)
-            if isinstance(devices, list):
-                devices = devices[: max(1, len(filtered_manifest.records))]
-            else:
-                devices = max(1, min(len(filtered_manifest.records), devices))
-
     # Set up model parameters
     if model == "boltz2":
         diffusion_params = Boltz2DiffusionParams()
@@ -1148,6 +1133,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         callbacks=[pred_writer],
         accelerator=accelerator,
         devices=devices,
+        num_nodes=num_nodes,
         precision=32 if model == "boltz1" else "bf16-mixed",
     )
 
