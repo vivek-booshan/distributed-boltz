@@ -718,6 +718,9 @@ def process_inputs(
         records_dir=records_dir,
     )
 
+    # wait for all processes to have read the inputs before adding to them
+    fabric.strategy.barrier()
+
     # Parse input data
     preprocessing_threads = min(preprocessing_threads, len(data))
     click.echo(f"Processing {len(data)} inputs with {preprocessing_threads} threads.")
@@ -739,7 +742,6 @@ def process_inputs(
             for path in data_per_rank:
                 process_input_partial(path)
 
-    # wait for processes to catch up
     fabric.strategy.barrier()
 
     # Load all records and write manifest
@@ -748,7 +750,6 @@ def process_inputs(
         manifest = Manifest(records)
         manifest.dump(out_dir / "processed" / "manifest.json")
 
-    # wait for processes to catch up
     fabric.strategy.barrier()
 
 @click.group()
