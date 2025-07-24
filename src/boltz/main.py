@@ -296,7 +296,7 @@ def check_inputs(data: Path) -> list[Path]:
 
     # Check if data is a directory
     if data.is_dir():
-        data: list[Path] = list(data.glob("*"))
+        data: list[Path] = list(sorted(data.glob("*")))
 
         # Filter out non .fasta or .yaml files, raise
         # an error on directory and other file types
@@ -612,7 +612,6 @@ def process_input(  # noqa: C901, PLR0912, PLR0915, D103
         print(f"Failed to process {path}. Skipping. Error: {e}.")  # noqa: T201
 
 
-@rank_zero_only
 def process_inputs(
     data: list[Path],
     out_dir: Path,
@@ -624,6 +623,7 @@ def process_inputs(
     use_msa_server: bool = False,
     boltz2: bool = False,
     preprocessing_threads: int = 1,
+    fabric: Fabric = None,
 ) -> Manifest:
     """Process the input data and output directory.
 
@@ -667,8 +667,10 @@ def process_inputs(
             )
         else:
             click.echo("All inputs are already processed.")
-            updated_manifest = Manifest(existing)
-            updated_manifest.dump(out_dir / "processed" / "manifest.json")
+
+            if fabric.global_rank == 0:
+                updated_manifest = Manifest(existing)
+                updated_manifest.dump(out_dir / "processed" / "manifest.json")
 
     # Create output directories
     msa_dir = out_dir / "msa"
@@ -720,18 +722,31 @@ def process_inputs(
     preprocessing_threads = min(preprocessing_threads, len(data))
     click.echo(f"Processing {len(data)} inputs with {preprocessing_threads} threads.")
 
-    if preprocessing_threads > 1 and len(data) > 1:
+    # split computation across tasks
+    world_size = fabric.world_size
+    rank = fabric.global_rank
+    data_per_rank = data[rank::world_size]
+
+    if preprocessing_threads > 1 and len(data_per_rank) > 1:
         with Pool(preprocessing_threads) as pool:
-            list(tqdm(pool.imap(process_input_partial, data), total=len(data)))
+            list(tqdm(pool.imap(process_input_partial, data_per_rank), total=len(data_per_rank)))
     else:
-        for path in tqdm(data):
-            process_input_partial(path)
+        if world_size == 1:
+            # progress bar only when running in a single process
+            for path in tqdm(data_per_rank):
+                process_input_partial(path)
+        else:
+            for path in data_per_rank:
+                process_input_partial(path)
 
     # Load all records and write manifest
-    records = [Record.load(p) for p in records_dir.glob("*.json")]
-    manifest = Manifest(records)
-    manifest.dump(out_dir / "processed" / "manifest.json")
+    if fabric.global_rank == 0:
+        records = [Record.load(p) for p in records_dir.glob("*.json")]
+        manifest = Manifest(records)
+        manifest.dump(out_dir / "processed" / "manifest.json")
 
+    # wait for processes to catch up
+    fabric.strategy.barrier()
 
 @click.group()
 def cli() -> None:
@@ -1061,10 +1076,8 @@ def predict(  # noqa: C901, PLR0915, PLR0912
             boltz2=model == "boltz2",
             preprocessing_threads=preprocessing_threads,
             max_msa_seqs=max_msa_seqs,
+            fabric=fabric
         )
-
-        # wait for processes to catch up, as all the work is done on rank 0
-        f.strategy.barrier()
 
     fabric.launch(process)
 
