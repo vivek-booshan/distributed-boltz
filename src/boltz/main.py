@@ -14,6 +14,7 @@ from typing import Literal, Optional
 import click
 import torch
 from lightning.fabric.strategies import DDPStrategy
+from datetime import timedelta
 from lightning.fabric import Fabric
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.utilities import rank_zero_only
@@ -1066,7 +1067,8 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     mol_dir = cache / "mols"
 
     # Set up the distributed fabric
-    fabric = Fabric(strategy="ddp", accelerator=accelerator, devices=devices, num_nodes=num_nodes)
+    fabric = Fabric(strategy=DDPStrategy(timeout=timedelta(hours=12)),
+                    accelerator=accelerator, devices=devices, num_nodes=num_nodes)
     def process(f: Fabric):
         # Process inputs
         process_inputs(

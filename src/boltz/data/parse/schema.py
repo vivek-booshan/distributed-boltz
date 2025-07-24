@@ -221,6 +221,7 @@ def compute_3d_conformer(mol: Mol, version: str = "v3") -> bool:
         options = AllChem.ETKDGv2()
 
     options.clearConfs = False
+    options.timeout = 60
     conf_id = -1
 
     try:
