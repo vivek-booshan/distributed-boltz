@@ -739,6 +739,9 @@ def process_inputs(
             for path in data_per_rank:
                 process_input_partial(path)
 
+    # wait for processes to catch up
+    fabric.strategy.barrier()
+
     # Load all records and write manifest
     if fabric.global_rank == 0:
         records = [Record.load(p) for p in records_dir.glob("*.json")]
