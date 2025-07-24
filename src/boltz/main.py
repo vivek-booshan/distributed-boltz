@@ -669,6 +669,7 @@ def process_inputs(
         else:
             click.echo("All inputs are already processed.")
 
+            fabric.strategy.barrier()
             if fabric.global_rank == 0:
                 updated_manifest = Manifest(existing)
                 updated_manifest.dump(out_dir / "processed" / "manifest.json")
