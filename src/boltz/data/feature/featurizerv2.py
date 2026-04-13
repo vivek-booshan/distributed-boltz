@@ -1192,7 +1192,7 @@ def process_atom_features(
 
         # Sample a random conformer
         if (chain_idx, res_id) not in res_index_to_conf_id:
-            conf_ids = [int(conf.GetId()) for conf in mol.GetConformers()]
+            conf_ids = list(range(mol.GetNumConformers()))
             conf_id = int(random.choice(conf_ids))
             res_index_to_conf_id[(chain_idx, res_id)] = conf_id
 
