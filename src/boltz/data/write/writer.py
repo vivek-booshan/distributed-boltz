@@ -249,13 +249,13 @@ class BoltzWriter(BasePredictionWriter):
             # Save embeddings
             if self.write_embeddings and "s" in prediction and "z" in prediction:
                 s = prediction["s"].cpu().numpy()
-                z = prediction["z"].cpu().numpy()
+                # z = prediction["z"].cpu().numpy()
 
                 path = (
                     struct_dir
-                    / f"embeddings_{record.id}.npz"
+                    / f"embeddings_{record.id}.npy"
                 )
-                np.savez_compressed(path, s=s, z=z)
+                np.save(path, s)
 
     def on_predict_epoch_end(
         self,
