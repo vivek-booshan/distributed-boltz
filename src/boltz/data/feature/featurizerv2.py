@@ -734,8 +734,12 @@ def process_token_features(  # noqa: C901, PLR0915, PLR0912
                     contact_threshold[binder_mask, idx] = max_distance
                     contact_threshold[idx, binder_mask] = max_distance
 
-    if inference_contact_constraints is not None:
-        for token1, token2, max_distance, force in inference_contact_constraints:
+    if inference_contact_constraints:
+        for constraint in (inference_contact_constraints or []):
+            if constraint is None: continue
+            token1, token2, max_distance, force = constraint
+    # if inference_contact_constraints is not None:
+    #     for token1, token2, max_distance, force in inference_contact_constraints:
             for idx1, _token1 in enumerate(token_data):
                 if (
                     _token1["mol_type"] != const.chain_type_ids["NONPOLYMER"]
