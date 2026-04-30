@@ -13,9 +13,9 @@ from typing import Literal, Optional
 
 import click
 import torch
-from lightning.fabric.strategies import DDPStrategy
+from lightning_fabric.strategies import DDPStrategy
 from datetime import timedelta
-from lightning.fabric import Fabric
+from lightning_fabric import Fabric
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.utilities import rank_zero_only
 from rdkit import Chem
