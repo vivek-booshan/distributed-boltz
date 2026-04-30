@@ -14,9 +14,10 @@ from typing import Literal, Optional
 
 import click
 import torch
-from lightning.fabric import Fabric 
-from lightning.fabric.strategies import DDPStrategy
+from lightning_fabric import Fabric
+from lightning_fabric.strategies import DDPStrategy
 
+# from pytorch_lightning.strategies import DDPStrategy
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.utilities import rank_zero_only
 from rdkit import Chem
@@ -1072,11 +1073,11 @@ def cli() -> None:
     help=" to dump the s and z embeddings into a npz file. Default is False.",
 )
 
-@click.option(
-    "--only_s_embeddings",
-    is_flag=True,
-    help="When writing embeddings, only saves s embeddings (no pae, pde, pairwise, etc)"
-)
+# @click.option(
+#     "--only_s_embeddings",
+#     is_flag=True,
+#     help="When writing embeddings, only saves s embeddings (no pae, pde, pairwise, etc)"
+# )
 
 def predict(  # noqa: C901, PLR0915, PLR0912
     data: str,
@@ -1117,6 +1118,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     num_subsampled_msa: int = 1024,
     no_kernels: bool = False,
     write_embeddings: bool = False,
+    # only_s_embeddings: bool = False,
 ) -> None:
     """Run predictions with Boltz."""
     # If cpu, write a friendly warning
@@ -1303,7 +1305,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         output_format=output_format,
         boltz2=model == "boltz2",
         write_embeddings=write_embeddings,
-        only_s_embeddings=only_s_embeddings,
+        # only_s_embeddings=only_s_embeddings,
     )
 
     # Set up trainer
