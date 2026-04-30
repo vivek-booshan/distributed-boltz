@@ -13,9 +13,10 @@ from typing import Literal, Optional
 
 import click
 import torch
-from pytorch_lightning import Trainer, seed_everything
-from pytorch_lightning.strategies import DDPStrategy
-from pytorch_lightning.utilities import rank_zero_only
+
+from lightning_fabric import Fabric
+from lightning_fabric.strategies import DDPStrategy
+
 from rdkit import Chem
 from tqdm import tqdm
 
@@ -1077,6 +1078,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     num_subsampled_msa: int = 1024,
     no_kernels: bool = False,
     write_embeddings: bool = False,
+    # only_s_embeddings: bool = False,
 ) -> None:
     """Run predictions with Boltz."""
     # If cpu, write a friendly warning
