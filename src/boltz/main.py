@@ -1,5 +1,6 @@
 import multiprocessing
 import os
+from datetime import timedelta
 import pickle
 import platform
 import tarfile
@@ -13,8 +14,10 @@ from typing import Literal, Optional
 
 import click
 import torch
+from lightning.fabric import Fabric 
+from lightning.fabric.strategies import DDPStrategy
+
 from pytorch_lightning import Trainer, seed_everything
-from pytorch_lightning.strategies import DDPStrategy
 from pytorch_lightning.utilities import rank_zero_only
 from rdkit import Chem
 from tqdm import tqdm
@@ -296,7 +299,7 @@ def check_inputs(data: Path) -> list[Path]:
 
     # Check if data is a directory
     if data.is_dir():
-        data: list[Path] = list(data.glob("*"))
+        data: list[Path] = list(sorted(data.glob("*")))
 
         # Filter out non .fasta or .yaml files, raise
         # an error on directory and other file types
@@ -661,7 +664,7 @@ def process_input(  # noqa: C901, PLR0912, PLR0915, D103
         print(f"Failed to process {path}. Skipping. Error: {e}.")  # noqa: T201
 
 
-@rank_zero_only
+# @rank_zero_only
 def process_inputs(
     data: list[Path],
     out_dir: Path,
@@ -677,6 +680,7 @@ def process_inputs(
     api_key_value: Optional[str] = None,
     boltz2: bool = False,
     preprocessing_threads: int = 1,
+    fabric: Fabric = None,
 ) -> Manifest:
     """Process the input data and output directory.
 
@@ -738,7 +742,12 @@ def process_inputs(
             )
         else:
             click.echo("All inputs are already processed.")
-            updated_manifest = Manifest(existing)
+            # updated_manifest = Manifest(existing)
+            # updated_manifest.dump(out_dir / "processed" / "manifest.json")
+            fabric.strategy.barrier()
+            if fabric.global_rank == 0:
+                updated_manifest = Manifest(existing)
+
             updated_manifest.dump(out_dir / "processed" / "manifest.json")
 
     # Create output directories
@@ -791,22 +800,37 @@ def process_inputs(
         records_dir=records_dir,
     )
 
+    fabric.strategy.barrier()
     # Parse input data
     preprocessing_threads = min(preprocessing_threads, len(data))
     click.echo(f"Processing {len(data)} inputs with {preprocessing_threads} threads.")
 
-    if preprocessing_threads > 1 and len(data) > 1:
+    world_size = fabric.world_size
+    rank = fabric.global_rank
+    data_per_rank = data[rank::world_size]
+
+    if preprocessing_threads > 1 and len(data_per_rank) > 1:
+    # if preprocessing_threads > 1 and len(data) > 1:
         with Pool(preprocessing_threads) as pool:
-            list(tqdm(pool.imap(process_input_partial, data), total=len(data)))
+            list(tqdm(pool.imap(process_input_partial, data_per_rank), total=len(data_per_rank)))
     else:
-        for path in tqdm(data):
-            process_input_partial(path)
+        if world_size == 1:
+            for path in tqdm(data_per_rank):
+                process_input_partial(path)
+        else:
+            for path in data_per_rank:
+                process_input_partial(path)
+        # for path in tqdm(data):
+        #     process_input_partial(path)
 
+    fabric.strategy.barrier()
     # Load all records and write manifest
-    records = [Record.load(p) for p in records_dir.glob("*.json")]
-    manifest = Manifest(records)
-    manifest.dump(out_dir / "processed" / "manifest.json")
+    if fabric.global_rank == 0:
+        records = [Record.load(p) for p in records_dir.glob("*.json")]
+        manifest = Manifest(records)
+        manifest.dump(out_dir / "processed" / "manifest.json")
 
+    fabric.strategy.barrier()
 
 @click.group()
 def cli() -> None:
@@ -843,6 +867,14 @@ def cli() -> None:
     help="The number of devices to use for prediction. Default is 1.",
     default=1,
 )
+
+@click.option(
+    "--num_nodes",
+    type=int,
+    help="The number of nodes to use for prediction. Default is 1.",
+    default=1
+)
+
 @click.option(
     "--accelerator",
     type=click.Choice(["gpu", "cpu", "tpu"]),
@@ -1039,6 +1071,13 @@ def cli() -> None:
     is_flag=True,
     help=" to dump the s and z embeddings into a npz file. Default is False.",
 )
+
+@click.option(
+    "--only_s_embeddings",
+    is_flag=True,
+    help="When writing embeddings, only saves s embeddings (no pae, pde, pairwise, etc)"
+)
+
 def predict(  # noqa: C901, PLR0915, PLR0912
     data: str,
     out_dir: str,
@@ -1046,6 +1085,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     checkpoint: Optional[str] = None,
     affinity_checkpoint: Optional[str] = None,
     devices: int = 1,
+    num_nodes: int = 1,
     accelerator: str = "gpu",
     recycling_steps: int = 3,
     sampling_steps: int = 200,
@@ -1157,24 +1197,36 @@ def predict(  # noqa: C901, PLR0915, PLR0912
             raise ValueError(msg)
 
     # Process inputs
+    # NOTE(vivek): wrapped process input in fabric
+    fabric = Fabric(strategy=DDPStrategy(timeout=timedelta(hours=12)),
+                    accelerator=accelerator,
+                    devices=devices,
+                    num_nodes=num_nodes)
+
     ccd_path = cache / "ccd.pkl"
     mol_dir = cache / "mols"
-    process_inputs(
-        data=data,
-        out_dir=out_dir,
-        ccd_path=ccd_path,
-        mol_dir=mol_dir,
-        use_msa_server=use_msa_server,
-        msa_server_url=msa_server_url,
-        msa_pairing_strategy=msa_pairing_strategy,
-        msa_server_username=msa_server_username,
-        msa_server_password=msa_server_password,
-        api_key_header=api_key_header,
-        api_key_value=api_key_value,
-        boltz2=model == "boltz2",
-        preprocessing_threads=preprocessing_threads,
-        max_msa_seqs=max_msa_seqs,
-    )
+
+    def process(f: Fabric):
+        process_inputs(
+            data=data,
+            out_dir=out_dir,
+            ccd_path=ccd_path,
+            mol_dir=mol_dir,
+            use_msa_server=use_msa_server,
+            msa_server_url=msa_server_url,
+            msa_pairing_strategy=msa_pairing_strategy,
+            msa_server_username=msa_server_username,
+            msa_server_password=msa_server_password,
+            api_key_header=api_key_header,
+            api_key_value=api_key_value,
+            boltz2=model == "boltz2",
+            preprocessing_threads=preprocessing_threads,
+            max_msa_seqs=max_msa_seqs,
+            fabric=fabric,
+        )
+
+        # f.strategy.barrier()
+        fabric.launch(process)
 
     # Load manifest
     manifest = Manifest.load(out_dir / "processed" / "manifest.json")
@@ -1208,22 +1260,23 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     )
 
     # Set up trainer
-    strategy = "auto"
-    if (isinstance(devices, int) and devices > 1) or (
-        isinstance(devices, list) and len(devices) > 1
-    ):
-        start_method = "fork" if platform.system() != "win32" and platform.system() != "Windows" else "spawn"
-        strategy = DDPStrategy(start_method=start_method)
-        if len(filtered_manifest.records) < devices:
-            msg = (
-                "Number of requested devices is greater "
-                "than the number of predictions, taking the minimum."
-            )
-            click.echo(msg)
-            if isinstance(devices, list):
-                devices = devices[: max(1, len(filtered_manifest.records))]
-            else:
-                devices = max(1, min(len(filtered_manifest.records), devices))
+    # NOTE(vivek): commented out strategy and startmethod
+    # strategy = "auto"
+    # if (isinstance(devices, int) and devices > 1) or (
+    #     isinstance(devices, list) and len(devices) > 1
+    # ):
+    #     # start_method = "fork" if platform.system() != "win32" and platform.system() != "Windows" else "spawn"
+    #     # strategy = DDPStrategy(start_method=start_method)
+    #     if len(filtered_manifest.records) < devices:
+    #         msg = (
+    #             "Number of requested devices is greater "
+    #             "than the number of predictions, taking the minimum."
+    #         )
+    #         click.echo(msg)
+    #         if isinstance(devices, list):
+    #             devices = devices[: max(1, len(filtered_manifest.records))]
+    #         else:
+    #             devices = max(1, min(len(filtered_manifest.records), devices))
 
     # Set up model parameters
     if model == "boltz2":
@@ -1250,15 +1303,17 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         output_format=output_format,
         boltz2=model == "boltz2",
         write_embeddings=write_embeddings,
+        only_s_embeddings=only_s_embeddings,
     )
 
     # Set up trainer
     trainer = Trainer(
         default_root_dir=out_dir,
-        strategy=strategy,
+        strategy="ddp", # ddp hard coded
         callbacks=[pred_writer],
         accelerator=accelerator,
         devices=devices,
+        num_nodes=num_nodes,
         precision=32 if model == "boltz1" else "bf16-mixed",
     )
 

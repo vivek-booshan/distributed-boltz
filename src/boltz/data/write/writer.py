@@ -24,6 +24,7 @@ class BoltzWriter(BasePredictionWriter):
         output_format: Literal["pdb", "mmcif"] = "mmcif",
         boltz2: bool = False,
         write_embeddings: bool = False,
+        only_s_embeddings: bool = False,
     ) -> None:
         """Initialize the writer.
 
@@ -181,7 +182,7 @@ class BoltzWriter(BasePredictionWriter):
                     np.array(atoms["coords"][:, None], dtype=Coords)
 
                 # Save confidence summary
-                if "plddt" in prediction:
+                if "plddt" in prediction and not self.only_s_embeddings:
                     path = (
                         struct_dir
                         / f"confidence_{record.id}_model_{idx_to_rank[model_idx]}.json"
@@ -229,7 +230,7 @@ class BoltzWriter(BasePredictionWriter):
                     np.savez_compressed(path, plddt=plddt.cpu().numpy())
 
                 # Save pae
-                if "pae" in prediction:
+                if "pae" in prediction and not self.only_s_embeddings:
                     pae = prediction["pae"][model_idx]
                     path = (
                         struct_dir
@@ -238,7 +239,7 @@ class BoltzWriter(BasePredictionWriter):
                     np.savez_compressed(path, pae=pae.cpu().numpy())
 
                 # Save pde
-                if "pde" in prediction:
+                if "pde" in prediction and not self.only_s_embeddings:
                     pde = prediction["pde"][model_idx]
                     path = (
                         struct_dir
@@ -248,14 +249,18 @@ class BoltzWriter(BasePredictionWriter):
                 
             # Save embeddings
             if self.write_embeddings and "s" in prediction and "z" in prediction:
-                s = prediction["s"].cpu().numpy()
-                z = prediction["z"].cpu().numpy()
 
                 path = (
                     struct_dir
                     / f"embeddings_{record.id}.npz"
                 )
-                np.savez_compressed(path, s=s, z=z)
+
+                s = prediction["s"].cpu().numpy()
+                if not self.only_s_embeddings:
+                    z = prediction["z"].cpu().numpy()
+                    np.savez_compressed(path, s=s, z=z)
+                else:
+                    np.save(path, s)
 
     def on_predict_epoch_end(
         self,

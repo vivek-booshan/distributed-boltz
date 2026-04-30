@@ -276,7 +276,8 @@ def get_conformer(mol: Mol) -> Conformer:
 
     """
     # Try using the computed conformer
-    for c in mol.GetConformers():
+    conformers = [mol.GetConformer(cid) for cid in range(mol.GetNumConformers())]
+    for c in conformers:
         try:
             if c.GetProp("name") == "Computed":
                 return c
@@ -284,7 +285,7 @@ def get_conformer(mol: Mol) -> Conformer:
             pass
 
     # Fallback to the ideal coordinates
-    for c in mol.GetConformers():
+    for c in conformers:
         try:
             if c.GetProp("name") == "Ideal":
                 return c
@@ -292,7 +293,8 @@ def get_conformer(mol: Mol) -> Conformer:
             pass
 
     # Fallback to boltz2 format
-    conf_ids = [int(conf.GetId()) for conf in mol.GetConformers()]
+    # conf_ids = [int(conf.GetId()) for conf in mol.GetConformers()]
+    conf_ids = list(range(mol.GetNumConformers()))
     if len(conf_ids) > 0:
         conf_id = conf_ids[0]
         conformer = mol.GetConformer(conf_id)
